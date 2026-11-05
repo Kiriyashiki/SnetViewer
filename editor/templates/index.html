@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Map CSV Editor</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: #f0f0f0;
+      }
+      #map-container {
+        position: relative;
+        display: inline-block;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      canvas {
+        display: block;
+        background: #ddd;
+      }
+
+      .marker {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 0 3px black;
+        transform: translate(-50%, -50%);
+        cursor: pointer;
+        transition: transform 0.1s;
+      }
+      .marker:hover {
+        transform: translate(-50%, -50%) scale(1.5);
+        z-index: 100;
+      }
+
+      #editor-menu {
+        display: none;
+        position: absolute;
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        z-index: 200;
+        width: 220px;
+      }
+      #editor-menu h3 {
+        margin: 0 0 10px 0;
+        font-size: 16px;
+      }
+      .form-group {
+        margin-bottom: 8px;
+      }
+      .form-group label {
+        display: inline-block;
+        width: 60px;
+        font-size: 14px;
+      }
+      .form-group input {
+        width: 130px;
+        padding: 4px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      button {
+        margin-top: 10px;
+        width: 100%;
+        padding: 6px;
+        cursor: pointer;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      #close-btn {
+        background: #dc3545;
+        margin-top: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map-container">
+      <canvas id="mapCanvas" width="768" height="1280"></canvas>
+      <div id="markers-layer"></div>
+
+      <div id="editor-menu">
+        <h3 id="edit-name">Point Name</h3>
+        <div class="form-group"><label>Tile X</label><input type="number" id="edit-tx" /></div>
+        <div class="form-group"><label>Tile Y</label><input type="number" id="edit-ty" /></div>
+        <div class="form-group"><label>Pixel X</label><input type="number" id="edit-px" /></div>
+        <div class="form-group"><label>Pixel Y</label><input type="number" id="edit-py" /></div>
+        <button onclick="saveEntry()">Save Mapping</button>
+        <button id="close-btn" onclick="closeEditor()">Close</button>
+      </div>
+    </div>
+
+    <script>
+      const ZOOM = 7;
+      const X_MIN = 113,
+        X_MAX = 115;
+      const Y_MIN = 47,
+        Y_MAX = 51;
+      const TILE_SIZE = 256;
+
+      const canvas = document.getElementById("mapCanvas");
+      const ctx = canvas.getContext("2d");
+      const markersLayer = document.getElementById("markers-layer");
+      const editor = document.getElementById("editor-menu");
+
+      let csvData = [];
+      let currentEditingMarker = null;
+
+      async function init() {
+        await loadTilesAndDrawGrid();
+        await loadCSVData();
+      }
+
+      async function loadTilesAndDrawGrid() {
+        const promises = [];
+        for (let x = X_MIN; x <= X_MAX; x++) {
+          for (let y = Y_MIN; y <= Y_MAX; y++) {
+            promises.push(
+              new Promise((resolve) => {
+                const img = new Image();
+
+                // CRITICAL: Request CORS permission from the browser
+                img.crossOrigin = "anonymous";
+
+                // Point to the new Flask proxy route
+                img.src = `/proxy/tiles/${ZOOM}/${x}/${y}.png`;
+
+                img.onload = () => {
+                  ctx.drawImage(img, (x - X_MIN) * TILE_SIZE, (y - Y_MIN) * TILE_SIZE);
+                  resolve();
+                };
+                img.onerror = () => {
+                  console.error(`Failed to load tile: ${x}/${y}`);
+                  resolve();
+                };
+              }),
+            );
+          }
+        }
+        await Promise.all(promises);
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.4)";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= X_MAX - X_MIN + 1; x++) {
+          ctx.beginPath();
+          ctx.moveTo(x * TILE_SIZE, 0);
+          ctx.lineTo(x * TILE_SIZE, canvas.height);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= Y_MAX - Y_MIN + 1; y++) {
+          ctx.beginPath();
+          ctx.moveTo(0, y * TILE_SIZE);
+          ctx.lineTo(canvas.width, y * TILE_SIZE);
+          ctx.stroke();
+        }
+      }
+      async function loadCSVData() {
+        const res = await fetch("/api/data");
+        csvData = await res.json();
+        markersLayer.innerHTML = "";
+        csvData.forEach((entry) => createMarker(entry));
+      }
+      function createMarker(entry) {
+        const cx = (parseInt(entry.tilex) - X_MIN) * TILE_SIZE + parseInt(entry.pixelx);
+        const cy = (parseInt(entry.tiley) - Y_MIN) * TILE_SIZE + parseInt(entry.pixely);
+        const pixelData = ctx.getImageData(cx, cy, 1, 1).data;
+        const color = `rgb(${pixelData[0]}, ${pixelData[1]},${pixelData[2]})`;
+
+        const div = document.createElement("div");
+        div.className = "marker";
+        div.style.left = `${cx}px`;
+        div.style.top = `${cy}px`;
+        div.style.backgroundColor = color;
+        div.title = entry.name;
+
+        div.onclick = (e) => openEditor(e, entry, div);
+        markersLayer.appendChild(div);
+      }
+
+      function openEditor(e, entry, markerElement) {
+        currentEditingMarker = { entry, element: markerElement };
+
+        document.getElementById("edit-name").innerText = entry.name;
+        document.getElementById("edit-tx").value = entry.tilex;
+        document.getElementById("edit-ty").value = entry.tiley;
+        document.getElementById("edit-px").value = entry.pixelx;
+        document.getElementById("edit-py").value = entry.pixely;
+
+        editor.style.display = "block";
+        editor.style.left = `${parseInt(markerElement.style.left) + 15}px`;
+        editor.style.top = `${parseInt(markerElement.style.top) - 20}px`;
+      }
+
+      function closeEditor() {
+        editor.style.display = "none";
+        currentEditingMarker = null;
+      }
+
+      async function saveEntry() {
+        if (!currentEditingMarker) return;
+
+        const updatedData = {
+          name: currentEditingMarker.entry.name,
+          tilex: parseInt(document.getElementById("edit-tx").value),
+          tiley: parseInt(document.getElementById("edit-ty").value),
+          pixelx: parseInt(document.getElementById("edit-px").value),
+          pixely: parseInt(document.getElementById("edit-py").value),
+        };
+
+        const res = await fetch("/api/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatedData),
+        });
+
+        if (res.ok) {
+          closeEditor();
+          await loadCSVData(); // Refresh all markers visually
+        } else {
+          alert("Error saving data");
+        }
+      }
+
+      // Initialize application
+      window.onload = init;
+    </script>
+  </body>
+</html>

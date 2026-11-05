@@ -1,0 +1,12 @@
+target/
+build/
+dist/
+.gradle/
+*.class
+.DS_Store
+*.iml
+.idea/
+.vscode/
+venv/
+__pycache__/
+editor/*.csv
