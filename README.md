@@ -4,6 +4,8 @@ Java desktop application for visualizing [S-net](https://www.seafloor.bosai.go.j
 
 ![App View](./main.png)
 
+Get the app in [Releases](https://github.com/Kiriyashiki/SnetViewer/releases).
+
 ## About
 
 Data is updated every minute. Please note the data is usually 90-120s behind realtime.
